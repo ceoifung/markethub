@@ -42,10 +42,10 @@ if ([string]::IsNullOrWhiteSpace($storePassword) -or
 
 $keystoreBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($keystorePath))
 
-$keystoreBase64 | gh secret set ANDROID_KEYSTORE_BASE64 -R $Repo
-$storePassword | gh secret set ANDROID_STORE_PASSWORD -R $Repo
-$keyAlias | gh secret set ANDROID_KEY_ALIAS -R $Repo
-$keyPassword | gh secret set ANDROID_KEY_PASSWORD -R $Repo
-$RemoteBaseUrl | gh secret set REMOTE_BASE_URL -R $Repo
+gh secret set ANDROID_KEYSTORE_BASE64 -R $Repo --body $keystoreBase64
+gh secret set ANDROID_STORE_PASSWORD -R $Repo --body $storePassword
+gh secret set ANDROID_KEY_ALIAS -R $Repo --body $keyAlias
+gh secret set ANDROID_KEY_PASSWORD -R $Repo --body $keyPassword
+gh secret set REMOTE_BASE_URL -R $Repo --body $RemoteBaseUrl
 
 Write-Host "已写入 GitHub Secrets 到 $Repo"
