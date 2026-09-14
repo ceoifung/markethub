@@ -1,11 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../config/app_config.dart';
 import '../proxy/proxy_server.dart';
 import '../update/update_service.dart';
+import 'back_navigation.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.proxyServer});
@@ -19,6 +21,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   InAppWebViewController? _webViewController;
   PullToRefreshController? _pullToRefreshController;
+  final BackGestureHandler _backGestureHandler = BackGestureHandler();
   double _progress = 0;
   bool _checkedForUpdate = false;
 
@@ -51,72 +54,106 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              if (_progress > 0 && _progress < 1)
-                LinearProgressIndicator(value: _progress),
-              Expanded(
-                child: InAppWebView(
-                  initialUrlRequest: URLRequest(
-                    url: WebUri(widget.proxyServer.entryUrl),
-                  ),
-                  pullToRefreshController: _pullToRefreshController,
-                  initialSettings: InAppWebViewSettings(
-                    javaScriptEnabled: true,
-                    mediaPlaybackRequiresUserGesture: false,
-                    allowsInlineMediaPlayback: true,
-                    useShouldOverrideUrlLoading: true,
-                  ),
-                  onWebViewCreated: (controller) {
-                    _webViewController = controller;
-                  },
-                  onLoadStop: (controller, url) async {
-                    await _pullToRefreshController?.endRefreshing();
-                  },
-                  onReceivedError: (controller, request, error) async {
-                    await _pullToRefreshController?.endRefreshing();
-                    if (!context.mounted) {
-                      return;
-                    }
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('页面加载失败：${error.description}'),
-                      ),
-                    );
-                  },
-                  onProgressChanged: (controller, progress) async {
-                    if (progress == 100) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: _onSystemBack,
+      child: Scaffold(
+        body: Stack(
+          children: [
+            Column(
+              children: [
+                if (_progress > 0 && _progress < 1)
+                  LinearProgressIndicator(value: _progress),
+                Expanded(
+                  child: InAppWebView(
+                    initialUrlRequest: URLRequest(
+                      url: WebUri(widget.proxyServer.entryUrl),
+                    ),
+                    pullToRefreshController: _pullToRefreshController,
+                    initialSettings: InAppWebViewSettings(
+                      javaScriptEnabled: true,
+                      mediaPlaybackRequiresUserGesture: false,
+                      allowsInlineMediaPlayback: true,
+                      useShouldOverrideUrlLoading: true,
+                    ),
+                    onWebViewCreated: (controller) {
+                      _webViewController = controller;
+                    },
+                    onLoadStop: (controller, url) async {
                       await _pullToRefreshController?.endRefreshing();
-                    }
-                    if (!mounted) {
-                      return;
-                    }
-                    setState(() {
-                      _progress = progress / 100;
-                    });
+                    },
+                    onReceivedError: (controller, request, error) async {
+                      await _pullToRefreshController?.endRefreshing();
+                      if (!context.mounted) {
+                        return;
+                      }
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('页面加载失败：${error.description}'),
+                        ),
+                      );
+                    },
+                    onProgressChanged: (controller, progress) async {
+                      if (progress == 100) {
+                        await _pullToRefreshController?.endRefreshing();
+                      }
+                      if (!mounted) {
+                        return;
+                      }
+                      setState(() {
+                        _progress = progress / 100;
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+            Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: ValueListenableBuilder<ProxySnapshot>(
+                  valueListenable: widget.proxyServer.snapshot,
+                  builder: (context, snapshot, child) {
+                    return _StatusBanner(snapshot: snapshot);
                   },
                 ),
               ),
-            ],
-          ),
-          Align(
-            alignment: Alignment.topCenter,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: ValueListenableBuilder<ProxySnapshot>(
-                valueListenable: widget.proxyServer.snapshot,
-                builder: (context, snapshot, child) {
-                  return _StatusBanner(snapshot: snapshot);
-                },
-              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
+  }
+
+  /// 拦截 Android 系统返回手势：优先回退 WebView 历史（前端 hash 路由
+  /// 的每次跳转都会产生一条历史记录），到达根页面后再按一次才退出应用。
+  Future<void> _onSystemBack(bool didPop, Object? result) async {
+    if (didPop) {
+      return;
+    }
+
+    final controller = _webViewController;
+    final canGoBack = controller != null && await controller.canGoBack();
+    if (!mounted) {
+      return;
+    }
+
+    switch (_backGestureHandler.evaluate(canGoBack: canGoBack)) {
+      case BackGestureOutcome.navigateBackInWebView:
+        await controller?.goBack();
+      case BackGestureOutcome.exitApp:
+        await SystemNavigator.pop();
+      case BackGestureOutcome.promptExitConfirmation:
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('再按一次返回键退出应用'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+    }
   }
 
   Future<void> _checkForUpdate() async {
