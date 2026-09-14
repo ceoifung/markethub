@@ -34,7 +34,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          APP_VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //')
+          APP_VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | tr -d '\r')
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "tag_version=v$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "apk_name=markethub-$APP_VERSION.apk" >> "$GITHUB_OUTPUT"
