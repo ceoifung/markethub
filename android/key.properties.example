@@ -1,0 +1,4 @@
+storeFile=upload-keystore.jks
+storePassword=replace-with-store-password
+keyAlias=markethub
+keyPassword=replace-with-key-password
