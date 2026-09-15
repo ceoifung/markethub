@@ -31,8 +31,8 @@ class UpdateService {
       packageInfo.buildNumber,
     );
 
-    // 优先级1: 自有服务器上的清单(REMOTE_BASE_URL/version.yaml, 连通性最好,
-    // 发布后可手动把 version.yaml 拷到后端静态目录; 文件不存在则404跳过)
+    // 优先级1: 自有服务器上的清单(REMOTE_BASE_URL/version.yaml, 连通性最好;
+    // 后端缺省时自动中继GitHub最新清单, 也可手动放置静态文件覆盖)
     final remoteManifest = await _checkViaManifest(
       AppConfig.remoteBaseUri?.replace(path: '/version.yaml'),
       currentVersion,
@@ -44,7 +44,7 @@ class UpdateService {
     // 优先级2: GitHub Release 固定地址 releases/latest/download/version.yaml,
     // 由发版workflow自动生成, 不走 api.github.com, 无匿名限流
     final githubManifest = await _checkViaManifest(
-      AppConfig.releasesPageUri?.resolve('latest/download/version.yaml'),
+      latestManifestUri(),
       currentVersion,
     );
     if (githubManifest != null) {
@@ -75,6 +75,17 @@ class UpdateService {
       // api.github.com 不可达(超时/被墙/匿名限流)时走github.com重定向回退
     }
     return _checkViaReleaseRedirect(currentVersion);
+  }
+
+  /// GitHub 最新版清单地址: releases/latest/download 固定指向最新release附件。
+  /// 注意不能用 releasesPageUri.resolve('latest/...'): 基准路径无尾斜杠时
+  /// resolve 会替换掉 'releases' 段, 拼成错误地址。
+  static Uri? latestManifestUri({String? repository}) {
+    final repo = (repository ?? AppConfig.githubRepository).trim();
+    if (repo.isEmpty) {
+      return null;
+    }
+    return Uri.parse('https://github.com/$repo/releases/latest/download/version.yaml');
   }
 
   /// 通过 version.yaml 清单检测更新(扁平 key: value 格式, 由发版CI生成)。

@@ -2,6 +2,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:markethub/src/update/update_service.dart';
 
 void main() {
+  group('latestManifestUri 清单地址构造', () {
+    test('必须包含 releases/latest/download 完整路径(不能用resolve拼接)', () {
+      // 回归: resolve('latest/...') 在无尾斜杠基准上会丢掉 releases 段
+      final uri = UpdateService.latestManifestUri(repository: 'ceoifung/markethub');
+      expect(uri.toString(),
+          'https://github.com/ceoifung/markethub/releases/latest/download/version.yaml');
+    });
+
+    test('仓库为空时返回null', () {
+      expect(UpdateService.latestManifestUri(repository: ''), isNull);
+    });
+  });
+
   group('parseFlatYaml (version.yaml 清单解析)', () {
     test('解析CI生成的清单字段', () {
       const text = '''
