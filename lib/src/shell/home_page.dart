@@ -7,6 +7,8 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../config/app_config.dart';
 import '../proxy/proxy_server.dart';
 import '../update/update_service.dart';
+import '../notify/alert_channel.dart';
+import '../notify/alert_monitor.dart';
 import 'back_navigation.dart';
 
 class HomePage extends StatefulWidget {
@@ -24,6 +26,8 @@ class _HomePageState extends State<HomePage> {
   final BackGestureHandler _backGestureHandler = BackGestureHandler();
   double _progress = 0;
   bool _checkedForUpdate = false;
+  bool _monitorEnabled = false;
+  String? _pendingRoute;
 
   bool get _supportsPullToRefresh => Platform.isAndroid;
 
@@ -44,6 +48,60 @@ class _HomePageState extends State<HomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkForUpdate();
     });
+
+    if (Platform.isAndroid) {
+      AlertMonitor.init(onNotificationTap: _openRoute);
+      _restoreMonitor();
+    }
+  }
+
+  Future<void> _restoreMonitor() async {
+    final enabled = await AlertMonitor.enabled;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _monitorEnabled = enabled;
+    });
+    if (enabled) {
+      await AlertMonitor.startIfEnabled();
+    }
+  }
+
+  /// 点击通知跳转消息中心(hash 路由注入, 不整页刷新);
+  /// WebView 未就绪(通知冷启动 App)时挂起, 待 onLoadStop 后补跳。
+  void _openRoute(String route) {
+    if (route != kTapRouteAlertsCenter) {
+      return;
+    }
+    final controller = _webViewController;
+    if (controller != null) {
+      controller.evaluateJavascript(
+        source: 'window.location.hash = "#/$kTapRouteAlertsCenter";',
+      );
+    } else {
+      _pendingRoute = route;
+    }
+  }
+
+  Future<void> _toggleMonitor() async {
+    final ok = await AlertMonitor.setEnabled(!_monitorEnabled);
+    final enabledNow = await AlertMonitor.enabled;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _monitorEnabled = enabledNow;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          !ok
+              ? '未授予通知权限，请在系统设置中开启后重试。'
+              : (enabledNow ? '已开启后台提醒：买卖点与模拟盘成交将实时通知。' : '已关闭后台提醒。'),
+        ),
+      ),
+    );
   }
 
   @override
@@ -79,9 +137,14 @@ class _HomePageState extends State<HomePage> {
                     onWebViewCreated: (controller) {
                       _webViewController = controller;
                     },
-                    onLoadStop: (controller, url) async {
-                      await _pullToRefreshController?.endRefreshing();
-                    },
+                  onLoadStop: (controller, url) async {
+                    await _pullToRefreshController?.endRefreshing();
+                    final pending = _pendingRoute;
+                    if (pending != null) {
+                      _pendingRoute = null;
+                      _openRoute(pending);
+                    }
+                  },
                     onReceivedError: (controller, request, error) async {
                       await _pullToRefreshController?.endRefreshing();
                       if (!context.mounted) {
@@ -108,19 +171,33 @@ class _HomePageState extends State<HomePage> {
                 ),
               ],
             ),
-            Align(
-              alignment: Alignment.topCenter,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: ValueListenableBuilder<ProxySnapshot>(
-                  valueListenable: widget.proxyServer.snapshot,
-                  builder: (context, snapshot, child) {
-                    return _StatusBanner(snapshot: snapshot);
-                  },
+          Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: ValueListenableBuilder<ProxySnapshot>(
+                valueListenable: widget.proxyServer.snapshot,
+                builder: (context, snapshot, child) {
+                  return _StatusBanner(snapshot: snapshot);
+                },
+              ),
+            ),
+          ),
+          if (Platform.isAndroid)
+            Positioned(
+              right: 16,
+              bottom: 28,
+              child: FloatingActionButton.small(
+                onPressed: _toggleMonitor,
+                tooltip: _monitorEnabled ? '关闭后台提醒' : '开启后台提醒',
+                child: Icon(
+                  _monitorEnabled
+                      ? Icons.notifications_active
+                      : Icons.notifications_none,
                 ),
               ),
             ),
-          ],
+        ],
         ),
       ),
     );
