@@ -94,8 +94,8 @@ Future<void> pollOnce() async {
     await prefs.setStringList(kPrefNotifySeenIds, delta.updatedSeen);
     await _updateServiceText(
       delta.toNotify.isEmpty
-          ? '行情监控运行中 · $_clock()'
-          : '行情监控 · ${delta.toNotify.length} 条新提醒 · $_clock()',
+          ? '行情监控运行中 · ${_clock()}'
+          : '行情监控 · ${delta.toNotify.length} 条新提醒 · ${_clock()}',
     );
   } catch (_) {
     await _updateServiceText('行情监控 · 网络异常, 稍后重试');
