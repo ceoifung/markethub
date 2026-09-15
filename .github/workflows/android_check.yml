@@ -1,0 +1,53 @@
+name: Android Check
+
+# 推送 main 即自动验证: analyze + 单测 + 完整APK编译(免签名, 不发布产物)。
+# 全绿后再打 v* 标签走 android_release.yml 出正式包, 避免发版构建才发现问题。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.3'
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze project
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+      # 无签名release编译(key.properties缺失时自动回退debug签名): 验证gradle/manifest/desugaring/R8全链路
+      - name: Build APK (unsigned verification build)
+        run: >
+          flutter build apk --release
+          --dart-define=REMOTE_BASE_URL=http://127.0.0.1:8123
+          --dart-define=GITHUB_REPOSITORY=${{ github.repository }}
+
+      - name: Upload verification APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-check-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 7
