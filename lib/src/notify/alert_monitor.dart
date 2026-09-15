@@ -60,14 +60,23 @@ String _clock() {
 /// 单轮轮询: 拉增量告警 → 过滤去重 → 弹通知 → 写回游标。
 Future<void> pollOnce() async {
   final prefs = await SharedPreferences.getInstance();
-  final remoteBase =
-      (prefs.getString(kPrefNotifyRemoteBase) ?? AppConfig.remoteBaseUrl).trim();
-  if (remoteBase.isEmpty) return;
+  final storedBase = prefs.getString(kPrefNotifyRemoteBase);
+  final baseUri =
+      Uri.tryParse(storedBase ?? '') ?? AppConfig.remoteBaseUri;
+  if (baseUri == null || baseUri.host.isEmpty) {
+    return;
+  }
 
   try {
     final since = prefs.getInt(kPrefNotifySince) ?? 0;
+    // 与内置代理同规则: 整段替换path, 避免REMOTE_BASE_URL带尾斜杠/路径前缀时拼出 //api/alerts 导致404
     final res = await http
-        .get(Uri.parse('$remoteBase/api/alerts?since=$since'))
+        .get(
+          baseUri.replace(
+            path: '/api/alerts',
+            query: 'since=$since',
+          ),
+        )
         .timeout(const Duration(seconds: 20));
     if (res.statusCode != 200) {
       await _updateServiceText('行情监控 · 服务异常(${res.statusCode})');

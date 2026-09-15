@@ -36,19 +36,68 @@ class UpdateService {
       packageInfo.buildNumber,
     );
 
-    final response = await http.get(
-      releaseApiUri,
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'User-Agent': '${AppConfig.appTitle}/$currentVersion',
-      },
-    );
+    try {
+      final response = await http
+          .get(
+            releaseApiUri,
+            headers: {
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': '${AppConfig.appTitle}/$currentVersion',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
 
-    if (response.statusCode != 200) {
+      if (response.statusCode == 200) {
+        return _parseReleasePayload(response.body, currentVersion);
+      }
+    } catch (_) {
+      // api.github.com 不可达(超时/被墙/匿名限流)时走github.com重定向回退
+    }
+    return _checkViaReleaseRedirect(currentVersion);
+  }
+
+  /// 回退通道: GET github.com/{repo}/releases/latest 不跟随重定向,
+  /// 从302的Location(/releases/tag/vX.Y.Z+N)解析最新版本号。
+  /// 国内网络下 api.github.com 常不可达而 github.com 主站可达, 两者连通性不同。
+  static Future<UpdateInfo?> _checkViaReleaseRedirect(String currentVersion) async {
+    final releasesPageUri = AppConfig.releasesPageUri;
+    if (releasesPageUri == null) {
       return null;
     }
+    try {
+      final request = http.Request(
+        'GET',
+        releasesPageUri.replace(pathSegments: [...releasesPageUri.pathSegments, 'latest']),
+      )..followRedirects = false;
+      final response = await request.send().timeout(const Duration(seconds: 10));
+      final location = response.headers['location'] ?? '';
+      final segments = Uri.parse(location).pathSegments;
+      if (segments.length < 2 || segments[segments.length - 2] != 'tag') {
+        return null;
+      }
+      final latestVersion =
+          _normalizeVersion(Uri.decodeComponent(segments.last));
+      if (latestVersion.isEmpty ||
+          _compareVersions(latestVersion, currentVersion) <= 0) {
+        return null;
+      }
+      return UpdateInfo(
+        currentVersion: currentVersion,
+        latestVersion: latestVersion,
+        releaseNotes: '网络受限，未能获取更新说明，请打开发布页查看。',
+        releasePageUri: releasesPageUri,
+        downloadUri: null,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 
-    final payload = jsonDecode(response.body);
+  static UpdateInfo? _parseReleasePayload(
+    String responseBody,
+    String currentVersion,
+  ) {
+    final payload = jsonDecode(responseBody);
     if (payload is! Map<String, dynamic>) {
       return null;
     }

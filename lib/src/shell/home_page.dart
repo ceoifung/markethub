@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 import '../proxy/proxy_server.dart';
@@ -28,6 +29,10 @@ class _HomePageState extends State<HomePage> {
   bool _checkedForUpdate = false;
   bool _monitorEnabled = false;
   String? _pendingRoute;
+  Offset? _bellPos;
+
+  static const String _kPrefBellX = 'notify.bell_x';
+  static const String _kPrefBellY = 'notify.bell_y';
 
   bool get _supportsPullToRefresh => Platform.isAndroid;
 
@@ -56,16 +61,32 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _restoreMonitor() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bellX = prefs.getDouble(_kPrefBellX);
+    final bellY = prefs.getDouble(_kPrefBellY);
     final enabled = await AlertMonitor.enabled;
     if (!mounted) {
       return;
     }
     setState(() {
       _monitorEnabled = enabled;
+      if (bellX != null && bellY != null) {
+        _bellPos = Offset(bellX, bellY);
+      }
     });
     if (enabled) {
       await AlertMonitor.startIfEnabled();
     }
+  }
+
+  Future<void> _persistBellPos() async {
+    final pos = _bellPos;
+    if (pos == null) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kPrefBellX, pos.dx);
+    await prefs.setDouble(_kPrefBellY, pos.dy);
   }
 
   /// 点击通知跳转消息中心(hash 路由注入, 不整页刷新);
@@ -184,19 +205,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           if (Platform.isAndroid)
-            Positioned(
-              right: 16,
-              bottom: 28,
-              child: FloatingActionButton.small(
-                onPressed: _toggleMonitor,
-                tooltip: _monitorEnabled ? '关闭后台提醒' : '开启后台提醒',
-                child: Icon(
-                  _monitorEnabled
-                      ? Icons.notifications_active
-                      : Icons.notifications_none,
-                ),
-              ),
-            ),
+            _buildBellButton(context),
         ],
         ),
       ),
@@ -231,6 +240,45 @@ class _HomePageState extends State<HomePage> {
             ),
           );
     }
+  }
+
+  /// 可拖动的后台提醒开关: 默认悬停在右下角(避开前端底部导航栏),
+  /// 拖动后位置持久化; 点击切换开关。
+  Widget _buildBellButton(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    const buttonSize = 44.0;
+    var pos = _bellPos ??
+        Offset(size.width - 16 - buttonSize, size.height - 88 - buttonSize);
+    return Positioned(
+      left: pos.dx,
+      top: pos.dy,
+      child: GestureDetector(
+        onPanUpdate: (details) {
+          setState(() {
+            pos = Offset(
+              (pos.dx + details.delta.dx)
+                  .clamp(8.0, size.width - buttonSize - 8.0),
+              (pos.dy + details.delta.dy)
+                  .clamp(64.0, size.height - buttonSize - 24.0),
+            );
+            _bellPos = pos;
+          });
+        },
+        onPanEnd: (_) => _persistBellPos(),
+        child: Opacity(
+          opacity: 0.8,
+          child: FloatingActionButton.small(
+            onPressed: _toggleMonitor,
+            tooltip: _monitorEnabled ? '关闭后台提醒' : '开启后台提醒',
+            child: Icon(
+              _monitorEnabled
+                  ? Icons.notifications_active
+                  : Icons.notifications_none,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _checkForUpdate() async {
