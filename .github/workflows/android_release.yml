@@ -85,9 +85,30 @@ jobs:
           name: android-release-apk
           path: build/app/outputs/flutter-apk/${{ steps.version.outputs.apk_name }}
 
+      # 版本清单: App更新检测通过固定地址 releases/latest/download/version.yaml 读取,
+      # 不依赖 api.github.com(国内不稳/匿名限流); 也可手动拷到自有后端静态目录(优先级最高)
+      - name: Generate version manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG="${{ steps.version.outputs.tag_version }}"
+          APK="${{ steps.version.outputs.apk_name }}"
+          TAG_ENC=$(printf '%s' "$TAG" | sed 's/+/%2B/g')
+          APK_ENC=$(printf '%s' "$APK" | sed 's/+/%2B/g')
+          cat > version.yaml <<EOF
+          version: ${{ steps.version.outputs.app_version }}
+          tag: $TAG
+          apkUrl: https://github.com/${{ github.repository }}/releases/download/$TAG_ENC/$APK_ENC
+          releaseUrl: https://github.com/${{ github.repository }}/releases/tag/$TAG_ENC
+          date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+          cat version.yaml
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: build/app/outputs/flutter-apk/${{ steps.version.outputs.apk_name }}
+          files: |
+            build/app/outputs/flutter-apk/${{ steps.version.outputs.apk_name }}
+            version.yaml

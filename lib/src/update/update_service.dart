@@ -25,16 +25,37 @@ class UpdateInfo {
 
 class UpdateService {
   static Future<UpdateInfo?> checkForUpdate() async {
-    final releaseApiUri = AppConfig.latestReleaseApiUri;
-    if (releaseApiUri == null) {
-      return null;
-    }
-
     final packageInfo = await PackageInfo.fromPlatform();
     final currentVersion = _fullVersion(
       packageInfo.version,
       packageInfo.buildNumber,
     );
+
+    // 优先级1: 自有服务器上的清单(REMOTE_BASE_URL/version.yaml, 连通性最好,
+    // 发布后可手动把 version.yaml 拷到后端静态目录; 文件不存在则404跳过)
+    final remoteManifest = await _checkViaManifest(
+      AppConfig.remoteBaseUri?.replace(path: '/version.yaml'),
+      currentVersion,
+    );
+    if (remoteManifest != null) {
+      return remoteManifest;
+    }
+
+    // 优先级2: GitHub Release 固定地址 releases/latest/download/version.yaml,
+    // 由发版workflow自动生成, 不走 api.github.com, 无匿名限流
+    final githubManifest = await _checkViaManifest(
+      AppConfig.releasesPageUri?.resolve('latest/download/version.yaml'),
+      currentVersion,
+    );
+    if (githubManifest != null) {
+      return githubManifest;
+    }
+
+    // 优先级3/4: api.github.com 与 github.com 重定向探测(老release无清单时兜底)
+    final releaseApiUri = AppConfig.latestReleaseApiUri;
+    if (releaseApiUri == null) {
+      return null;
+    }
 
     try {
       final response = await http
@@ -54,6 +75,73 @@ class UpdateService {
       // api.github.com 不可达(超时/被墙/匿名限流)时走github.com重定向回退
     }
     return _checkViaReleaseRedirect(currentVersion);
+  }
+
+  /// 通过 version.yaml 清单检测更新(扁平 key: value 格式, 由发版CI生成)。
+  static Future<UpdateInfo?> _checkViaManifest(
+    Uri? manifestUri,
+    String currentVersion,
+  ) async {
+    if (manifestUri == null) {
+      return null;
+    }
+    try {
+      final response = await http
+          .get(manifestUri, headers: {
+            'User-Agent': '${AppConfig.appTitle}/$currentVersion',
+          })
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) {
+        return null;
+      }
+      final fields = parseFlatYaml(response.body);
+      final latestVersion =
+          _normalizeVersion(fields['version'] ?? fields['tag'] ?? '');
+      if (latestVersion.isEmpty ||
+          _compareVersions(latestVersion, currentVersion) <= 0) {
+        return null;
+      }
+      final releasePageUri =
+          Uri.tryParse(fields['releaseUrl'] ?? '') ?? AppConfig.releasesPageUri;
+      if (releasePageUri == null) {
+        return null;
+      }
+      final apkUrl = fields['apkUrl'] ?? '';
+      return UpdateInfo(
+        currentVersion: currentVersion,
+        latestVersion: latestVersion,
+        releaseNotes: fields['notes']?.trim() ?? '',
+        releasePageUri: releasePageUri,
+        downloadUri:
+            apkUrl.isNotEmpty ? Uri.tryParse(apkUrl) : null,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 解析扁平 `key: value` 形式的YAML(CI生成的version.yaml), 忽略注释/多行块。
+  static Map<String, String> parseFlatYaml(String text) {
+    final fields = <String, String>{};
+    for (final rawLine in const LineSplitter().convert(text)) {
+      final line = rawLine.trimRight();
+      if (line.isEmpty ||
+          line.startsWith('#') ||
+          line.startsWith(' ') ||
+          line.startsWith('-')) {
+        continue;
+      }
+      final separator = line.indexOf(':');
+      if (separator <= 0) {
+        continue;
+      }
+      final value = line.substring(separator + 1).trim();
+      if (value.isEmpty || value == '|' || value == '>') {
+        continue;
+      }
+      fields[line.substring(0, separator).trim()] = value;
+    }
+    return fields;
   }
 
   /// 回退通道: GET github.com/{repo}/releases/latest 不跟随重定向,
